@@ -32,30 +32,13 @@
  * - LZ4 source repository : http://code.google.com/p/lz4/
  */
 
-#include "fsys_zfs.h"
-#include <string.h>
+#include <grub/err.h>
+#include <grub/mm.h>
+#include <grub/misc.h>
+#include <grub/types.h>
 
 static int LZ4_uncompress_unknownOutputSize(const char *source, char *dest,
 					    int isize, int maxOutputSize);
-
-int
-lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len)
-{
-	const uint8_t *src = s_start;
-	uint32_t bufsiz = (src[0] << 24) | (src[1] << 16) | (src[2] << 8) |
-	    src[3];
-
-	/* invalid compressed buffer size encoded at start */
-	if (bufsiz + 4 > s_len)
-		return (1);
-
-	/*
-	 * Returns 0 on success (decompression function returned non-negative)
-	 * and non-zero on failure (decompression function returned negative).
-	 */
-	return (LZ4_uncompress_unknownOutputSize(s_start + 4, d_start, bufsiz,
-	    d_len) < 0);
-}
 
 /*
  * CPU Feature Detection
@@ -90,11 +73,14 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len)
 /*
  * Compiler Options
  */
+
 #if __STDC_VERSION__ >= 199901L	/* C99 */
 /* "restrict" is a known keyword */
 #else
 /* Disable restrict */
-#define	restrict
+#ifndef restrict
+#define	restrict /* Only if somebody already didn't take care of that.*/
+#endif
 #endif
 
 #define	GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
@@ -112,11 +98,12 @@ lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len)
 #define	unlikely(expr)	expect((expr) != 0, 0)
 
 /* Basic types */
-#define	BYTE	uint8_t
-#define	U16	uint16_t
-#define	U32	uint32_t
-#define	S32	int32_t
-#define	U64	uint64_t
+#define	BYTE	grub_uint8_t
+#define	U16	grub_uint16_t
+#define	U32	grub_uint32_t
+#define	S32	grub_int32_t
+#define	U64	grub_uint64_t
+typedef grub_size_t size_t;
 
 typedef struct _U16_S {
 	U16 v;
@@ -182,6 +169,27 @@ typedef struct _U64_S {
 #define	LZ4_WILDCOPY(s, d, e) do { LZ4_COPYPACKET(s, d) } while (d < e);
 
 /* Decompression functions */
+grub_err_t
+lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len);
+
+grub_err_t
+lz4_decompress(void *s_start, void *d_start, size_t s_len, size_t d_len)
+{
+	const BYTE *src = s_start;
+	U32 bufsiz = (src[0] << 24) | (src[1] << 16) | (src[2] << 8) |
+	    src[3];
+
+	/* invalid compressed buffer size encoded at start */
+	if (bufsiz + 4 > s_len)
+		return grub_error(GRUB_ERR_BAD_FS,"lz4 decompression failed.");
+
+	/*
+	 * Returns 0 on success (decompression function returned non-negative)
+	 * and appropriate error on failure (decompression function returned negative).
+	 */
+	return (LZ4_uncompress_unknownOutputSize((char*)s_start + 4, d_start, bufsiz,
+	    d_len) < 0)?grub_error(GRUB_ERR_BAD_FS,"lz4 decompression failed."):0;
+}
 
 static int
 LZ4_uncompress_unknownOutputSize(const char *source,
@@ -228,7 +236,7 @@ LZ4_uncompress_unknownOutputSize(const char *source,
 				 * buffer.
 				 */
 				goto _output_error;
-			memcpy(op, ip, length);
+			grub_memcpy(op, ip, length);
 			op += length;
 			ip += length;
 			if (ip < iend)
